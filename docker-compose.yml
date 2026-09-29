@@ -1,0 +1,53 @@
+# OpenCode split in two: the sandbox runs OpenCode and its tools and holds no
+# secret; the gateway holds the keys and is the only way from the sandbox to
+# LiteLLM and Hindsight. The sandbox network carries nothing else.
+services:
+  opencode-sandbox:
+    image: mwaeckerlin/opencode:sandbox
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    ports:
+      - 4096:4096
+    environment:
+      OPENCODE_GATEWAY_URL: http://opencode-gateway:8080
+      OPENCODE_MODELS: gpt-4o-mini
+      HINDSIGHT_SHARED_BANK: shared
+      HINDSIGHT_OWN_BANK: opencode
+    volumes:
+      - workspace:/workspace
+    networks:
+      - sandbox
+
+  opencode-gateway:
+    image: mwaeckerlin/opencode:gateway
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    environment:
+      LITELLM_URL: http://litellm:4000
+      HINDSIGHT_URL: http://hindsight:8888
+      LITELLM_API_KEY_FILE: /run/secrets/opencode_litellm_key
+      HINDSIGHT_API_KEY_FILE: /run/secrets/opencode_hindsight_key
+    secrets:
+      - opencode_litellm_key
+      - opencode_hindsight_key
+    networks:
+      - sandbox
+      - services
+
+secrets:
+  opencode_litellm_key:
+    environment: OPENCODE_LITELLM_KEY
+  opencode_hindsight_key:
+    environment: OPENCODE_HINDSIGHT_KEY
+
+volumes:
+  workspace:
+
+networks:
+  # sandbox and gateway only, no route out
+  sandbox:
+    internal: true
+  # gateway, LiteLLM and Hindsight
+  services:

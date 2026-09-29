@@ -1,0 +1,95 @@
+# End-to-end stack of tests/run-e2e.sh: a real LiteLLM with a mock model that
+# demands its master key, a real Hindsight that demands its tenant key, the
+# gateway that holds both keys, and the sandbox that holds none. The keys are
+# test values of this stack only.
+name: opencode-e2e
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/etc/litellm.yaml", "--port", "4000"]
+    configs:
+      - source: litellm
+        target: /etc/litellm.yaml
+    environment:
+      LITELLM_MASTER_KEY: e2e-litellm-key-of-the-test-stack
+    networks:
+      - services
+
+  hindsight:
+    image: mwaeckerlin/hindsight
+    environment:
+      HINDSIGHT_API_WORKER_ID: hindsight
+      HINDSIGHT_API_LLM_PROVIDER: mock
+      HINDSIGHT_API_LLM_MODEL: mock-model
+      HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+      HINDSIGHT_API_TENANT_API_KEY_FILE: /run/secrets/hindsight_key
+    secrets:
+      - hindsight_key
+    networks:
+      - services
+
+  opencode-gateway:
+    image: mwaeckerlin/opencode:gateway
+    environment:
+      LITELLM_URL: http://litellm:4000
+      HINDSIGHT_URL: http://hindsight:8888
+      LITELLM_API_KEY_FILE: /run/secrets/litellm_key
+      HINDSIGHT_API_KEY_FILE: /run/secrets/hindsight_key
+    secrets:
+      - litellm_key
+      - hindsight_key
+    networks:
+      - sandbox
+      - services
+
+  opencode-sandbox:
+    image: mwaeckerlin/opencode:sandbox
+    environment:
+      OPENCODE_GATEWAY_URL: http://opencode-gateway:8080
+      OPENCODE_MODELS: test-model
+      HINDSIGHT_SHARED_BANK: shared
+      HINDSIGHT_OWN_BANK: opencode
+      OPENCODE_SERVER_PASSWORD_FILE: /run/secrets/server_password
+    secrets:
+      - server_password
+    networks:
+      - sandbox
+      - delegation
+
+  # an agent that delegates development, as the Hermes and OpenClaw gateways
+  # do: it reaches the OpenCode server over a network of its own and attaches
+  delegating-agent:
+    image: mwaeckerlin/opencode:sandbox
+    entrypoint: ["/usr/local/bin/opencode"]
+    command: ["--version"]
+    environment:
+      OPENCODE_DISABLE_AUTOUPDATE: "true"
+      OPENCODE_DISABLE_MODELS_FETCH: "true"
+    networks:
+      - delegation
+
+configs:
+  litellm:
+    content: |
+      model_list:
+        - model_name: test-model
+          litellm_params:
+            model: openai/test-model
+            api_key: not-used-by-the-mock
+            mock_response: "Hello from the mock LiteLLM of the opencode test stack."
+
+secrets:
+  litellm_key:
+    environment: OPENCODE_E2E_LITELLM_KEY
+  hindsight_key:
+    environment: OPENCODE_E2E_HINDSIGHT_KEY
+  server_password:
+    environment: OPENCODE_E2E_SERVER_PASSWORD
+
+networks:
+  sandbox:
+    internal: true
+  delegation:
+    internal: true
+  services:

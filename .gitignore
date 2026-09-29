@@ -1,0 +1,4 @@
+node_modules
+# credentials of the test environment
+.env
+**/.env

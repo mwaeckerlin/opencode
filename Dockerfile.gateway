@@ -1,0 +1,12 @@
+# The only container of an OpenCode stack that holds keys: a reverse proxy
+# without dependencies on the headless Node.js base, see gateway/gateway.mjs.
+FROM mwaeckerlin/nodejs AS gateway
+ENV CONTAINERNAME="opencode-gateway" \
+    OPENCODE_GATEWAY_PORT="8080"
+EXPOSE 8080
+COPY gateway/gateway.mjs /app/gateway.mjs
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["/usr/bin/node", "/app/gateway.mjs", "--health"]
+CMD ["/app/gateway.mjs"]
+
+FROM gateway
