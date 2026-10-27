@@ -1,6 +1,6 @@
 {
   "name": "@mwaeckerlin/opencode",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "OpenCode coding agent as Docker images: a sandbox without secrets and a gateway that holds the keys",
   "type": "module",
   "scripts": {

@@ -65,6 +65,7 @@ With a server password, the delegating agent passes it as basic authentication w
 | --- | --- | --- |
 | `OPENCODE_GATEWAY_URL` | `http://opencode-gateway:8080` | Address of the gateway |
 | `OPENCODE_MODELS` | *(empty)* | Comma separated model names of LiteLLM; the first one is the default model |
+| `OPENCODE_SMALL_MODEL` | *(empty)* | Model name of LiteLLM for small tasks such as session titles; empty: OpenCode chooses |
 | `HINDSIGHT_SHARED_BANK` | `shared` | Memory bank shared by all agents, MCP server `hindsight-shared` |
 | `HINDSIGHT_OWN_BANK` | `opencode` | Memory bank of OpenCode alone, MCP server `hindsight-own` |
 | `OPENCODE_PORT` | `4096` | Port of the web interface; not `14096`, where OpenCode itself listens behind `OPENCODE_BASE_PATH` |
