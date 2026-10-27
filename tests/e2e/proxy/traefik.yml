@@ -1,0 +1,9 @@
+# an unprivileged port: the proxy runs as nobody
+entryPoints:
+  web:
+    address: ":8080"
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+log:
+  level: ERROR

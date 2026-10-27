@@ -1,5 +1,8 @@
 # Changelog
 
+- 2026-10-27 **1.0.2**
+    - The web interface can be served below a path such as `/opencode`, with its page, files, server calls, live updates and terminal connections; the reverse proxy forwards the path unchanged, `/opencode` leads to `/opencode/`, agents of the stack keep reaching the server at its root, and a wrong path stops the start with a message that names the setting
+
 - 2026-10-27 **1.0.1**
     - OpenCode and the configuration from the environment come with `mwaeckerlin/sandbox-base`, so the agents Hermes and OpenClaw run the same release in their own sandboxes; this image runs it as the central server with the web interface, unchanged for its users
 

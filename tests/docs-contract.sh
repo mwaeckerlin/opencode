@@ -64,7 +64,7 @@ if [[ -f FEATURES.md && -f TESTS.md ]]; then
     fi
 fi
 
-SKIPS=$(grep -rnE '\bskip:|\btodo:|\.(skip|todo)\(' gateway tests --include='*.test.mjs' --include='*.sh' 2>/dev/null | grep -v 'tests/docs-contract.sh')
+SKIPS=$(grep -rnE '\bskip:|\btodo:|\.(skip|todo|only)\(|pytest\.skip|mark\.(skip|skipif|xfail)' gateway base-path tests --include='*.test.mjs' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'tests/docs-contract.sh')
 if [[ -n "${SKIPS}" ]]; then
     _fail "no_skipped_tests" "skip/todo markers found: ${SKIPS}"
 else

@@ -13,6 +13,35 @@ All features are listed in [FEATURES.md](FEATURES.md), all tests in [TESTS.md](T
 
 [docker-compose.yml](docker-compose.yml) shows the split: the sandbox on an internal network with the gateway only, the gateway also on the network of LiteLLM and Hindsight. Browse to port 4096 of the sandbox; behind a reverse proxy, put an authentication in front of it, since whoever reaches the web interface controls the agent.
 
+### Below a Base Path
+
+With `OPENCODE_BASE_PATH`, the sandbox itself serves the web interface below that path: the page, its files, every API call, the event stream, the websockets of the terminal and its redirects. The reverse proxy forwards the path unchanged, with no StripPrefix and no rewriting of pages or bundles. The bare path `/opencode` redirects to `/opencode/`. Agents of the stack keep addressing the server at its root, `http://opencode-sandbox:4096`.
+
+```yaml
+services:
+  opencode-sandbox:
+    image: mwaeckerlin/opencode:sandbox
+    environment:
+      OPENCODE_GATEWAY_URL: http://opencode-gateway:8080
+      OPENCODE_MODELS: gpt-4o-mini
+      OPENCODE_BASE_PATH: /opencode
+      OPENCODE_SERVER_PASSWORD_FILE: /run/secrets/opencode_server_password
+    secrets:
+      - opencode_server_password
+    volumes:
+      - workspace:/workspace
+    networks:
+      - sandbox
+      - proxy
+    deploy:
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.opencode.rule: PathPrefix(`/opencode`)
+        traefik.http.services.opencode.loadbalancer.server.port: "4096"
+```
+
+A stack that strips the path at the proxy drops the StripPrefix middleware when it sets `OPENCODE_BASE_PATH`; a `command` of the stack replaces the start of the image, and OpenCode then serves at the root only.
+
 ### Development Agent for Other Agents
 
 The sandbox runs one central OpenCode server; the web interface and the agents that delegate development to it share this instance. Hermes, OpenClaw or any other agent reaches port 4096 over a network of its own. An agent that needs the answer in its conversation sends the task through the server API: it opens a session and posts the task as a message, and the response carries the parts of the answer, the text among them:
@@ -38,7 +67,8 @@ With a server password, the delegating agent passes it as basic authentication w
 | `OPENCODE_MODELS` | *(empty)* | Comma separated model names of LiteLLM; the first one is the default model |
 | `HINDSIGHT_SHARED_BANK` | `shared` | Memory bank shared by all agents, MCP server `hindsight-shared` |
 | `HINDSIGHT_OWN_BANK` | `opencode` | Memory bank of OpenCode alone, MCP server `hindsight-own` |
-| `OPENCODE_PORT` | `4096` | Port of the web interface |
+| `OPENCODE_PORT` | `4096` | Port of the web interface; not `14096`, where OpenCode itself listens behind `OPENCODE_BASE_PATH` |
+| `OPENCODE_BASE_PATH` | *(empty)* | Path below which the web interface is served, such as `/opencode`; empty or `/` serves at the root. A value without a leading slash, with a space, or with a `.` or `..` segment stops the start with a message that names the variable |
 | `OPENCODE_SERVER_PASSWORD_FILE` | *(empty)* | File with the password of the server, a Docker secret; optional: with it, the web interface and every attaching agent need the password (user `opencode`), without it the server is open to whoever reaches port 4096 |
 
 OpenCode and the configuration from these variables come with [mwaeckerlin/sandbox-base]: its command `opencode` writes them into `OPENCODE_CONFIG_CONTENT` on every start, and `/entrypoint.sh --print-config` prints it. A new release of OpenCode arrives with the next build of `mwaeckerlin/sandbox-base`. Automatic updates, the model list download and the language server downloads are switched off, because the sandbox has no route to the internet.
@@ -73,7 +103,20 @@ The gateway forwards `/v1/…` and `/mcp/…` only and answers every other path 
 npm test
 ```
 
-`npm test` runs the docs contract, the unit tests of the gateway against real HTTP servers, the image contract of the headless gateway, and the end-to-end test in [tests/e2e](tests/e2e): a real LiteLLM with a mock model and a master key, the image `mwaeckerlin/hindsight` with a tenant key, the gateway, the sandbox, which answers a prompt and connects both memory banks through the gateway, and a second container that delegates a task to the server, with and without the password. The images are published for `linux/amd64` and `linux/arm64` by the reusable workflow of [mwaeckerlin/scratch](https://github.com/mwaeckerlin/scratch#publishing-on-docker-hub).
+`npm test` runs the docs contract, the unit tests of the gateway and of the base path front process against real HTTP servers, the image contract of the headless gateway, and the end-to-end test in [tests/e2e](tests/e2e): a real LiteLLM with a mock model and a master key, the image `mwaeckerlin/hindsight` with a tenant key, the gateway, the sandbox, which answers a prompt and connects both memory banks through the gateway, a second container that delegates a task to the server, with and without the password, and Chromium (Playwright in a container), which opens the web interface below `/opencode` behind Traefik with ``PathPrefix(`/opencode`)`` and without StripPrefix and at the root, on a network without internet access. The images are published for `linux/amd64` and `linux/arm64` by the reusable workflow of [mwaeckerlin/scratch](https://github.com/mwaeckerlin/scratch#publishing-on-docker-hub).
+
+## Internals
+
+### Base Path Mechanism
+
+OpenCode ships as one compiled Bun executable with its web interface embedded; its documentation names no base path setting, and no module can be loaded ahead of its server. The interface requests its files root-absolute (`/assets/…`), addresses the server through the origin of the page (`/session`, `/global/event`, `/pty/…`), and its router reads `location.pathname` without a base. With `OPENCODE_BASE_PATH`, the entrypoint therefore starts a small front process in Node.js, which the base image carries:
+
+- **Front process** (`base-path/serve.mjs`): starts `opencode web` on `127.0.0.1:14096` and listens on `OPENCODE_PORT` once OpenCode answers. It takes the base path off every request and websocket upgrade below it, puts it in front of every root-absolute `Location`, and answers the bare path with a 308 to its slash form. Requests outside the base path reach OpenCode unchanged, for the health check and the agents of the stack. It stops with OpenCode, and OpenCode with it.
+- **Page and files** (`base-path/configuration.mjs`): below the base path the front process writes `<script src="/opencode/opencode-base-path.js">` as the first element of the head and puts the base path in front of the `src` and `href` of the page, in front of every `url(/…)` of the stylesheets, and makes the icons of the web manifest relative to it. The content security policy of OpenCode allows only scripts of its own origin and its inline theme script, so the browser script is a file of the origin and the theme script keeps its text and its hash.
+- **Requests of the bundle** (`base-path/opencode-base-path.js`): the script, loaded before the bundle, takes the base path from its own address and puts it in front of every root-absolute URL of the own origin in `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, workers, `window.open`, `sendBeacon`, the history, the `src`, `href` and `action` of elements, including those the bundle clones from its templates, and, with the Navigation API, a document navigation.
+- **Router** (`base-path/patch-upstream.mjs`): the front process gives the router factory of Solid Router the base path when it serves the bundle, so routes, links and navigations of the interface lie below it. The patch matches the code by a pattern that does not depend on the names the minifier chose; a script that carries it more than once answers 502 with file and text. The image build starts the OpenCode of the image, reads its page, bundle and stylesheet, and stops with file and text when the router code is not there exactly once or the page or a stylesheet keeps a root-absolute address the front process does not adjust.
+
+The browser script itself is served without the server password, as it contains nothing but this code. A request below the base path asks OpenCode for plain text, so the front process can adjust the page, the stylesheets and the bundle; a reverse proxy in front may compress them again.
 
 ## Licence
 

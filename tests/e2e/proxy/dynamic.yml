@@ -1,0 +1,14 @@
+# The route of the deployment: everything below /opencode reaches the image
+# with the path unchanged, without StripPrefix and without a redirect of the
+# proxy; nothing else is routed.
+http:
+  routers:
+    opencode:
+      rule: "PathPrefix(`/opencode`)"
+      entryPoints: [web]
+      service: opencode
+  services:
+    opencode:
+      loadBalancer:
+        servers:
+          - url: "http://opencode-base-path:4096"

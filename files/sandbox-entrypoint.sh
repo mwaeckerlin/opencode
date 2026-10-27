@@ -27,8 +27,12 @@ if [[ -n "${OPENCODE_SERVER_PASSWORD_FILE:-}" ]]; then
     unset OPENCODE_SERVER_PASSWORD_FILE
 fi
 
-# the web interface by default; any other opencode command, and
+# the web interface by default, below OPENCODE_BASE_PATH through the front
+# process that checks the value; any other opencode command, and
 # --print-config, when given
+if [[ $# -eq 0 && -n "${OPENCODE_BASE_PATH:-}" ]]; then
+    exec /usr/bin/node /usr/local/lib/opencode-base-path/serve.mjs
+fi
 if [[ $# -eq 0 ]]; then
     set -- web --hostname 0.0.0.0 --port "${OPENCODE_PORT:-4096}"
 fi

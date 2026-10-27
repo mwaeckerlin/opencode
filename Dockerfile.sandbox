@@ -5,12 +5,21 @@
 # come with mwaeckerlin/sandbox-base; this image runs it as the central server
 # with its web interface.
 
+#
+# With OPENCODE_BASE_PATH, the front process base-path/serve.mjs starts
+# OpenCode on the loopback interface and serves it below that path; the build
+# stops when the interface of this OpenCode release no longer carries the code
+# the front process adjusts (base-path/patch-upstream.mjs).
+
 FROM mwaeckerlin/sandbox-base AS sandbox
 ENV CONTAINERNAME="opencode" \
     OPENCODE_GATEWAY_URL="http://opencode-gateway:8080" \
     HINDSIGHT_SHARED_BANK="shared" \
     HINDSIGHT_OWN_BANK="opencode" \
-    OPENCODE_PORT="4096"
+    OPENCODE_PORT="4096" \
+    OPENCODE_BASE_PATH=""
+COPY base-path/configuration.mjs base-path/serve.mjs base-path/patch-upstream.mjs base-path/opencode-base-path.js /usr/local/lib/opencode-base-path/
+RUN node /usr/local/lib/opencode-base-path/patch-upstream.mjs verify
 COPY --chmod=0755 files/sandbox-entrypoint.sh /entrypoint.sh
 RUN install -d -o ${RUN_USER} -g ${RUN_GROUP} /workspace
 EXPOSE 4096

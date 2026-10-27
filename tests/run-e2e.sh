@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End to end: OpenCode in the sandbox calls the model and the memory through the
 # gateway, which adds the keys; the sandbox holds no key and reaches nothing
-# but the gateway.
+# but the gateway. The same image serves below the base path /opencode behind
+# Traefik without StripPrefix, and Chromium checks it there and at the root.
 #
 # Usage: tests/run-e2e.sh   (after `npm run build`; needs mwaeckerlin/hindsight)
 
@@ -51,7 +52,8 @@ wait_litellm() {
 }
 
 echo "==> OpenCode end to end"
-"${COMPOSE[@]}" up -d || exit 1
+"${COMPOSE[@]}" build proxy browser || exit 1
+"${COMPOSE[@]}" up -d litellm hindsight opencode-gateway opencode-sandbox opencode-base-path proxy || exit 1
 wait_healthy hindsight || { _fail "hindsight_healthy" "see log"; exit 1; }
 wait_healthy opencode-gateway || { _fail "gateway_healthy" "see log"; exit 1; }
 wait_litellm || { _fail "litellm_ready" "see log"; exit 1; }
@@ -156,9 +158,48 @@ fi
 STATUS=$(docker exec "${SANDBOX}" curl -s -m 5 -o /dev/null -w '%{http_code}' http://opencode-gateway:8080/admin)
 [[ "${STATUS}" == "404" ]] && _pass "gateway_refuses_other_paths" || _fail "gateway_refuses_other_paths" "status ${STATUS}"
 
+# the same image below the base path /opencode, through its front process
+wait_healthy opencode-base-path && _pass "base_path_web_interface_healthy" || _fail "base_path_web_interface_healthy" "port 4096 does not answer"
+BASE=$("${COMPOSE[@]}" ps -q opencode-base-path)
+LOG=$("${COMPOSE[@]}" logs opencode-base-path)
+if grep -q "opencode: serving below /opencode/ on port 4096" <<< "${LOG}"; then
+    _pass "serves_below_the_base_path"
+else
+    _fail "serves_below_the_base_path" "the start did not report the base path"
+fi
+
+# the health check and the agents of the stack address the server at the root;
+# the base path does not move them
+for path in /global/health /opencode/global/health; do
+    HEALTH=$(docker exec "${BASE}" curl -fsS -m 10 -u "opencode:${OPENCODE_E2E_SERVER_PASSWORD}" "http://localhost:4096${path}" 2>&1)
+    if grep -q '"healthy":true' <<< "${HEALTH}"; then
+        _pass "base_path_server_answers_at_${path}"
+    else
+        _fail "base_path_server_answers_at_${path}" "${HEALTH}"
+    fi
+done
+
+# a wrong base path stops the start with a message that names the variable
+for value in "opencode" "/open code" "/x/../y"; do
+    if OUT=$(docker exec -e OPENCODE_BASE_PATH="${value}" "${BASE}" /entrypoint.sh 2>&1); then
+        _fail "invalid_base_path_stops_the_start" "the start accepted «${value}»"
+    elif grep -q "OPENCODE_BASE_PATH is" <<< "${OUT}"; then
+        _pass "invalid_base_path_stops_the_start «${value}»"
+    else
+        _fail "invalid_base_path_stops_the_start" "${OUT}"
+    fi
+done
+
+# Chromium below /opencode through Traefik, and at the root
+if "${COMPOSE[@]}" run --rm browser pytest -v --tb=short -W error -p no:cacheprovider test_base_path.py test_root.py; then
+    _pass "browser_suite"
+else
+    _fail "browser_suite" "see the pytest output above"
+fi
+
 echo ""
 echo "==> OpenCode end to end: ${PASS} passed, ${FAIL} failed"
 if [[ ${FAIL} -gt 0 ]]; then
-    "${COMPOSE[@]}" logs --tail 40 opencode-gateway opencode-sandbox
+    "${COMPOSE[@]}" logs --tail 40 opencode-gateway opencode-sandbox opencode-base-path proxy
     exit 1
 fi

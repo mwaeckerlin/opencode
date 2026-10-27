@@ -1,0 +1,1 @@
+const qfe=e=>t=>{const{base:n}=t,r=Yl(()=>t.children),i=E(()=>ej(r(),t.base||""));let s;const o=Hfe(e,i,()=>s,{base:n,singleFlight:t.singleFlight,transformUrl:t.transformUrl});return e.create&&e.create(o),f(QV.Provider,{value:o,
