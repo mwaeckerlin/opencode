@@ -18,8 +18,8 @@ All features are listed in [FEATURES.md](FEATURES.md), all tests in [TESTS.md](T
 The sandbox runs one central OpenCode server; the web interface and the agents that delegate development to it share this instance. Hermes, OpenClaw or any other agent reaches port 4096 over a network of its own. An agent that needs the answer in its conversation sends the task through the server API: it opens a session and posts the task as a message, and the response carries the parts of the answer, the text among them:
 
 ```bash
-$ SESSION=$(curl -fsS -u "opencode:${OPENCODE_SERVER_PASSWORD}" -X POST -H "Content-Type: application/json" -d '{}' http://opencode-sandbox:4096/session | jq -r .id)
-$ curl -fsS -u "opencode:${OPENCODE_SERVER_PASSWORD}" -X POST -H "Content-Type: application/json" \
+SESSION=$(curl -fsS -u "opencode:${OPENCODE_SERVER_PASSWORD}" -X POST -H "Content-Type: application/json" -d '{}' http://opencode-sandbox:4096/session | jq -r .id)
+curl -fsS -u "opencode:${OPENCODE_SERVER_PASSWORD}" -X POST -H "Content-Type: application/json" \
     -d '{"model":{"providerID":"litellm","modelID":"<model>"},"parts":[{"type":"text","text":"<task>"}]}' \
     "http://opencode-sandbox:4096/session/${SESSION}/message" | jq -r '.parts[] | select(.type == "text") | .text'
 ```
@@ -41,7 +41,7 @@ With a server password, the delegating agent passes it as basic authentication w
 | `OPENCODE_PORT` | `4096` | Port of the web interface |
 | `OPENCODE_SERVER_PASSWORD_FILE` | *(empty)* | File with the password of the server, a Docker secret; optional: with it, the web interface and every attaching agent need the password (user `opencode`), without it the server is open to whoever reaches port 4096 |
 
-The start writes the configuration of OpenCode from these variables into `OPENCODE_CONFIG_CONTENT`; `/entrypoint.sh --print-config` prints it. Automatic updates, the model list download and the language server downloads are switched off, because the sandbox has no route to the internet.
+OpenCode and the configuration from these variables come with [mwaeckerlin/sandbox-base]: its command `opencode` writes them into `OPENCODE_CONFIG_CONTENT` on every start, and `/entrypoint.sh --print-config` prints it. A new release of OpenCode arrives with the next build of `mwaeckerlin/sandbox-base`. Automatic updates, the model list download and the language server downloads are switched off, because the sandbox has no route to the internet.
 
 - `/workspace` — the working directory of the agent; persist it.
 
@@ -70,7 +70,7 @@ The gateway forwards `/v1/…` and `/mcp/…` only and answers every other path 
 ## Development
 
 ```bash
-$ npm test
+npm test
 ```
 
 `npm test` runs the docs contract, the unit tests of the gateway against real HTTP servers, the image contract of the headless gateway, and the end-to-end test in [tests/e2e](tests/e2e): a real LiteLLM with a mock model and a master key, the image `mwaeckerlin/hindsight` with a tenant key, the gateway, the sandbox, which answers a prompt and connects both memory banks through the gateway, and a second container that delegates a task to the server, with and without the password. The images are published for `linux/amd64` and `linux/arm64` by the reusable workflow of [mwaeckerlin/scratch](https://github.com/mwaeckerlin/scratch#publishing-on-docker-hub).

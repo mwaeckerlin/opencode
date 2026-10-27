@@ -1,5 +1,8 @@
 # Changelog
 
+- 2026-10-27 **1.0.1**
+    - OpenCode and the configuration from the environment come with `mwaeckerlin/sandbox-base`, so the agents Hermes and OpenClaw run the same release in their own sandboxes; this image runs it as the central server with the web interface, unchanged for its users
+
 - 2026-09-29 **1.0.0**
     - OpenCode with its web interface in a sandbox that holds no key, and a gateway that holds the keys and adds them to every model and memory call
     - Models through LiteLLM and two Hindsight memory banks, one shared with the other agents and one of its own, all configured from the environment

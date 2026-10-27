@@ -1,28 +1,16 @@
 # OpenCode runs its tools (bash, edit, write) in the process that talks to the
 # model, so it lives in the sandbox with the full toolset of
 # mwaeckerlin/sandbox-base and holds no secret at all; the keys stay in the
-# gateway image.
-
-FROM mwaeckerlin/sandbox-base AS download
-ARG TARGETARCH
-# the newest release of OpenCode, for the architecture of the build
-RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
-      amd64) ARCH=x64 ;; \
-      arm64) ARCH=arm64 ;; \
-      *) echo "unsupported architecture ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL "https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz" \
-       | tar -xz -C /usr/local/bin opencode \
-    && /usr/local/bin/opencode --version
+# gateway image. OpenCode itself and the configuration from the environment
+# come with mwaeckerlin/sandbox-base; this image runs it as the central server
+# with its web interface.
 
 FROM mwaeckerlin/sandbox-base AS sandbox
 ENV CONTAINERNAME="opencode" \
-    OPENCODE_DISABLE_AUTOUPDATE="true" \
-    OPENCODE_DISABLE_MODELS_FETCH="true" \
-    OPENCODE_DISABLE_LSP_DOWNLOAD="true" \
-    OPENCODE_DISABLE_CLAUDE_CODE="true" \
+    OPENCODE_GATEWAY_URL="http://opencode-gateway:8080" \
+    HINDSIGHT_SHARED_BANK="shared" \
+    HINDSIGHT_OWN_BANK="opencode" \
     OPENCODE_PORT="4096"
-COPY --from=download /usr/local/bin/opencode /usr/local/bin/opencode
 COPY --chmod=0755 files/sandbox-entrypoint.sh /entrypoint.sh
 RUN install -d -o ${RUN_USER} -g ${RUN_GROUP} /workspace
 EXPOSE 4096
