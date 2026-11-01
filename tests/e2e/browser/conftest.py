@@ -6,10 +6,12 @@ from urllib.parse import urlparse
 
 import pytest
 import requests
+from playwright.sync_api import sync_playwright
 
 PROXY_URL = os.environ.get("PROXY_URL", "http://proxy:8080").rstrip("/")
 PREFIX = os.environ.get("PREFIX", "/opencode")
 ROOT_URL = os.environ.get("ROOT_URL", "http://opencode-sandbox:4096").rstrip("/")
+SUBSCRIPTION_URL = os.environ.get("SUBSCRIPTION_URL", "http://opencode-subscription:4096").rstrip("/")
 PASSWORD = os.environ["OPENCODE_E2E_SERVER_PASSWORD"]
 AUTH = ("opencode", PASSWORD)
 APP = PROXY_URL + PREFIX + "/"
@@ -76,10 +78,35 @@ def settled(page, requested, timeout=60):
     raise TimeoutError(f"the page did not settle within {timeout}s: {samples}")
 
 
+# the engines every test that opens a page runs in; ENGINES of the browser
+# container names them, comma separated
+ENGINES = [engine for engine in os.environ.get("ENGINES", "chromium,firefox").split(",") if engine]
+
+
 @pytest.fixture(scope="session")
-def browser_context_args(browser_context_args):
+def playwright_driver():
+    with sync_playwright() as driver:
+        yield driver
+
+
+@pytest.fixture(scope="session", params=ENGINES)
+def browser(request, playwright_driver):
+    engine = getattr(playwright_driver, request.param).launch()
+    yield engine
+    engine.close()
+
+
+@pytest.fixture
+def context(browser):
     # the server password, as the browser asks for it at the challenge of OpenCode
-    return {**browser_context_args, "http_credentials": {"username": AUTH[0], "password": AUTH[1]}}
+    fresh = browser.new_context(http_credentials={"username": AUTH[0], "password": AUTH[1]})
+    yield fresh
+    fresh.close()
+
+
+@pytest.fixture
+def page(context):
+    return context.new_page()
 
 
 @pytest.fixture(scope="session", autouse=True)

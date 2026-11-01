@@ -9,7 +9,8 @@
 // fetch, XMLHttpRequest, WebSocket, EventSource, workers, the service worker,
 // window.open, sendBeacon, the history, the src, href and action of every
 // element, and a document navigation. A relative, foreign or already prefixed
-// URL stays as it is. The router of the bundle reads the base path from
+// URL stays as it is, and so does the address of an element that carries
+// data-opencode-keep-url, such as the login link. The router of the bundle reads the base path from
 // globalThis.__opencodeBasePath (patch-upstream.mjs).
 (function () {
   "use strict";
@@ -168,6 +169,8 @@
   // that arrives with a root-absolute URL gets the base path.
   var NAMES = ["src", "href", "poster", "action", "formaction"];
   function rebaseElement(element) {
+    // the login link of the front process names an address of its own
+    if (element.hasAttribute && element.hasAttribute("data-opencode-keep-url")) return;
     for (var i = 0; i < NAMES.length; i++) {
       var value = element.getAttribute(NAMES[i]);
       if (value !== null && rebase(value) !== value) nativeSetAttribute.call(element, NAMES[i], rebase(value));

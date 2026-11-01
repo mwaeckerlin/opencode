@@ -6,10 +6,13 @@
 # with its web interface.
 
 #
-# With OPENCODE_BASE_PATH, the front process base-path/serve.mjs starts
-# OpenCode on the loopback interface and serves it below that path; the build
-# stops when the interface of this OpenCode release no longer carries the code
-# the front process adjusts (base-path/patch-upstream.mjs).
+# With OPENCODE_BASE_PATH, LITELLM_SUBSCRIPTION_LOGIN_URL or
+# OPENCODE_ALERT_TOKEN_SHA256, the front process base-path/serve.mjs starts
+# OpenCode on the loopback interface and serves it below that path, with the
+# login link and with the alert relay; the build stops when the interface of
+# this OpenCode release no longer carries the code the front process adjusts
+# (base-path/patch-upstream.mjs). OpenCode loads the plugin
+# plugin/subscription-login.js from OPENCODE_CONFIG_DIR.
 
 FROM mwaeckerlin/sandbox-base AS sandbox
 ENV CONTAINERNAME="opencode" \
@@ -17,8 +20,15 @@ ENV CONTAINERNAME="opencode" \
     HINDSIGHT_SHARED_BANK="shared" \
     HINDSIGHT_OWN_BANK="opencode" \
     OPENCODE_PORT="4096" \
-    OPENCODE_BASE_PATH=""
-COPY base-path/configuration.mjs base-path/serve.mjs base-path/patch-upstream.mjs base-path/opencode-base-path.js /usr/local/lib/opencode-base-path/
+    OPENCODE_BASE_PATH="" \
+    LITELLM_SUBSCRIPTION_LOGIN_URL="" \
+    LITELLM_SUBSCRIPTION_MODEL_PREFIX="mysubs/" \
+    OPENCODE_ALERT_TOKEN_SHA256="" \
+    OPENCODE_ALERT_SESSION_TITLE="Alerts" \
+    OPENCODE_ALERT_MAX_BYTES="1048576" \
+    OPENCODE_CONFIG_DIR="/usr/local/lib/opencode-config"
+COPY base-path/configuration.mjs base-path/serve.mjs base-path/patch-upstream.mjs base-path/opencode-base-path.js base-path/opencode-login-link.css /usr/local/lib/opencode-base-path/
+COPY plugin/subscription-login.js /usr/local/lib/opencode-config/plugins/
 RUN node /usr/local/lib/opencode-base-path/patch-upstream.mjs verify
 COPY --chmod=0755 files/sandbox-entrypoint.sh /entrypoint.sh
 RUN install -d -o ${RUN_USER} -g ${RUN_GROUP} /workspace

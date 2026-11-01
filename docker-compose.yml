@@ -8,7 +8,8 @@ services:
       context: .
       dockerfile: Dockerfile.sandbox
     ports:
-      - 4096:4096
+      # every address of the host, IPv4 and IPv6, unless BIND_ADDRESS names one
+      - "${BIND_ADDRESS:+${BIND_ADDRESS:-}:}4096:4096"
     environment:
       OPENCODE_GATEWAY_URL: http://opencode-gateway:8080
       OPENCODE_MODELS: gpt-4o-mini

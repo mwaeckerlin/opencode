@@ -1,6 +1,7 @@
 // Tests of base-path/serve.mjs against real HTTP servers of node standing in
 // for OpenCode: requests, answers and websocket upgrades below the base path,
-// the bare base path, the root, and the start of the front process.
+// the bare base path, the root, the login link, the alert relay, and the
+// start of the front process.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -10,8 +11,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 
+import crypto from "node:crypto";
+
 import { UPSTREAM_PORT } from "./configuration.mjs";
-import { createFrontServer, kindOf } from "./serve.mjs";
+import { alertSession, createFrontServer, kindOf, prepareAlertSession } from "./serve.mjs";
 
 const SERVE = fileURLToPath(new URL("./serve.mjs", import.meta.url));
 const fixture = (name) => fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
@@ -55,7 +58,7 @@ function opencode(request, response) {
   }
 }
 
-async function stack(t, basePath = "/opencode") {
+async function stack(t, basePath = "/opencode", loginUrl = "") {
   const upstream = http.createServer(opencode);
   upstream.on("upgrade", (request, socket) => {
     if (request.url.startsWith("/pty/")) {
@@ -67,7 +70,7 @@ async function stack(t, basePath = "/opencode") {
     }
   });
   await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
-  const front = createFrontServer({ basePath, port: upstream.address().port });
+  const front = createFrontServer({ basePath, loginUrl, port: upstream.address().port });
   await new Promise((resolve) => front.listen(0, "127.0.0.1", resolve));
   t.after(() => {
     front.closeAllConnections();
@@ -220,6 +223,179 @@ test("only page, stylesheet, script and manifest are adjusted", () => {
   assert.equal(kindOf("/assets/x.png", "image/png"), undefined);
 });
 
+const LOGIN = "https://swarm-01/litellm/mysubs";
+
+test("with a login address the page carries the link at the root, and its stylesheet comes from the front process", async (t) => {
+  const { url } = await stack(t, "", LOGIN);
+  const page = await fetch(`${url}/`, { headers: { accept: "text/html", "accept-encoding": "gzip" } });
+  assert.equal(page.headers.get("content-security-policy"), CSP);
+  const html = await page.text();
+  assert.equal(Number(page.headers.get("content-length")), Buffer.byteLength(html));
+  assert.match(html, /<a id="litellm-subscription-login" data-opencode-keep-url href="https:\/\/swarm-01\/litellm\/mysubs" target="_blank" rel="noopener noreferrer">Subscription login<\/a>/);
+  assert.match(html, /<link rel="stylesheet" href="\/opencode-login-link.css">/);
+  assert.doesNotMatch(html, /opencode-base-path.js/);
+  const style = await fetch(`${url}/opencode-login-link.css`);
+  assert.equal(style.status, 200);
+  assert.match(style.headers.get("content-type"), /^text\/css/);
+  assert.equal(await style.text(), fs.readFileSync(new URL("./opencode-login-link.css", import.meta.url), "utf8"));
+  // at the root the front process adjusts the page alone, and the API keeps its encoding
+  assert.equal(await (await fetch(`${url}/assets/index-BVEDUzgq.js`)).text(), ROUTER);
+  assert.equal((await fetch(`${url}/global/health`, { headers: { "accept-encoding": "gzip" } })).headers.get("x-encoding"), "gzip");
+});
+
+test("below the base path the page carries the browser script first and the login link", async (t) => {
+  const { url } = await stack(t, "/opencode", LOGIN);
+  const html = await (await fetch(`${url}/opencode/`)).text();
+  assert.match(html, /<head>\n<script src="\/opencode\/opencode-base-path.js"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" href="\/opencode\/opencode-login-link.css">/);
+  assert.match(html, /href="https:\/\/swarm-01\/litellm\/mysubs"/);
+  assert.equal((await fetch(`${url}/opencode/opencode-login-link.css`)).status, 200);
+});
+
+// OpenCode for the alert relay: the sessions it lists, the sessions it
+// creates, and the messages it takes, with the authorization it saw.
+async function alertStack(t, { basePath = "", sessions = [], password = "pw", loginUrl = "", maxBytes = 1048576 } = {}) {
+  const seen = { created: [], messages: [], authorization: [] };
+  const upstream = http.createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => (body += chunk));
+    request.on("end", () => {
+      seen.authorization.push(request.headers.authorization ?? null);
+      const json = (status, value) => {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify(value));
+      };
+      const message = /^\/session\/([^/]+)\/message$/.exec(request.url);
+      if (request.method === "GET" && request.url === "/session") return json(200, sessions);
+      if (request.method === "POST" && request.url === "/session") {
+        const session = { id: `ses_${seen.created.length + 1}`, title: JSON.parse(body).title, time: { updated: Date.now() } };
+        seen.created.push(session);
+        sessions.push(session);
+        return json(200, session);
+      }
+      if (request.method === "POST" && message) {
+        if (!sessions.some((session) => session.id === message[1])) return json(404, { name: "NotFoundError", data: { message: `Session not found: ${message[1]}` } });
+        seen.messages.push({ session: message[1], body: JSON.parse(body) });
+        return json(200, { info: { id: `msg_${seen.messages.length}`, role: "user" } });
+      }
+      json(404, {});
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+  const digest = crypto.createHash("sha256").update("alert-token-of-the-test").digest("hex");
+  const session = alertSession({ port: upstream.address().port, title: "Alerts", authorization });
+  const front = createFrontServer({ basePath, loginUrl, alerts: { digest, maxBytes, session }, port: upstream.address().port });
+  await new Promise((resolve) => front.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    front.closeAllConnections();
+    upstream.closeAllConnections();
+    front.close();
+    upstream.close();
+  });
+  return { url: `http://127.0.0.1:${front.address().port}`, seen, sessions, session, authorization, upstream };
+}
+
+const BEARER = { authorization: "Bearer alert-token-of-the-test", "content-type": "application/json" };
+const GRAFANA = fixture("grafana-webhook.json");
+
+test("an alert with the token goes into the alert session without an answer of the model, the session created once", async (t) => {
+  const { url, seen, authorization } = await alertStack(t, { loginUrl: LOGIN });
+  for (let round = 0; round < 2; round++) {
+    const response = await fetch(`${url}/alert`, { method: "POST", headers: BEARER, body: GRAFANA });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { session: "ses_1", message: `msg_${round + 1}` });
+  }
+  assert.deepEqual(seen.created.map((session) => session.title), ["Alerts"]);
+  assert.equal(seen.messages.length, 2);
+  const { noReply, parts } = seen.messages[0].body;
+  assert.equal(noReply, true);
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0].type, "text");
+  assert.match(parts[0].text, /^\[FIRING:2\]  \(blue\)\n\n\*\*Firing\*\*/);
+  assert.match(parts[0].text, /\n\nSign in to the subscriptions again: https:\/\/swarm-01\/litellm\/mysubs$/);
+  // the front process calls OpenCode with the server password, never with the alert token
+  assert.ok(seen.authorization.every((value) => value === authorization), seen.authorization);
+});
+
+test("the alert session is found again by its title, and a deleted one is created anew", async (t) => {
+  const { url, seen, sessions } = await alertStack(t, { sessions: [
+    { id: "ses_old", title: "Alerts", time: { updated: 1 } },
+    { id: "ses_new", title: "Alerts", time: { updated: 2 } },
+    { id: "ses_child", title: "Alerts", parentID: "ses_new", time: { updated: 3 } },
+    { id: "ses_other", title: "Work", time: { updated: 4 } },
+  ] });
+  assert.deepEqual(await (await fetch(`${url}/alert`, { method: "POST", headers: BEARER, body: GRAFANA })).json(), { session: "ses_new", message: "msg_1" });
+  assert.equal(seen.created.length, 0);
+  sessions.splice(0, sessions.length);
+  assert.deepEqual(await (await fetch(`${url}/alert`, { method: "POST", headers: BEARER, body: GRAFANA })).json(), { session: "ses_1", message: "msg_2" });
+  assert.deepEqual(seen.messages.map((entry) => entry.session), ["ses_new", "ses_1"]);
+});
+
+test("an alert without the token, with a wrong token or another method is refused and reaches no session", async (t) => {
+  const { url, seen } = await alertStack(t);
+  for (const headers of [{}, { authorization: "Bearer wrong" }, { authorization: "Basic b3BlbmNvZGU6cHc=" }, { authorization: "alert-token-of-the-test" }]) {
+    const response = await fetch(`${url}/alert`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: GRAFANA });
+    assert.equal(response.status, 401, JSON.stringify(headers));
+    assert.equal(response.headers.get("www-authenticate"), 'Bearer realm="opencode-alerts"');
+  }
+  const get = await fetch(`${url}/alert`, { headers: BEARER });
+  assert.equal(get.status, 405);
+  assert.equal(get.headers.get("allow"), "POST, PUT");
+  assert.equal(seen.messages.length, 0);
+});
+
+test("an empty alert answers 400, one above the limit 413, and neither reaches the session", async (t) => {
+  const { url, seen } = await alertStack(t, { maxBytes: 64 });
+  const empty = await fetch(`${url}/alert`, { method: "POST", headers: BEARER, body: " \n" });
+  assert.equal(empty.status, 400);
+  assert.equal((await empty.json()).error, "the alert is empty");
+  const large = await fetch(`${url}/alert`, { method: "POST", headers: BEARER, body: "x".repeat(65) });
+  assert.equal(large.status, 413);
+  assert.equal((await large.json()).error, "the alert is larger than 64 bytes");
+  assert.equal(seen.messages.length, 0);
+});
+
+test("the relay answers at the root and below the base path, and the rest of the page stays OpenCode's", async (t) => {
+  const { url, seen } = await alertStack(t, { basePath: "/opencode" });
+  assert.equal((await fetch(`${url}/opencode/alert`, { method: "POST", headers: BEARER, body: "below" })).status, 200);
+  assert.equal((await fetch(`${url}/alert`, { method: "POST", headers: BEARER, body: "root" })).status, 200);
+  assert.deepEqual(seen.messages.map((entry) => entry.body.parts[0].text), ["below", "root"]);
+  assert.equal((await fetch(`${url}/opencode/alerts`)).status, 404);
+});
+
+test("an alert while OpenCode does not answer gives 502 with the cause", async (t) => {
+  const digest = crypto.createHash("sha256").update("alert-token-of-the-test").digest("hex");
+  const front = createFrontServer({ basePath: "", alerts: { digest, maxBytes: 1048576, session: alertSession({ port: 1, authorization: "" }) }, port: 1 });
+  await new Promise((resolve) => front.listen(0, "127.0.0.1", resolve));
+  t.after(() => front.close());
+  const response = await fetch(`http://127.0.0.1:${front.address().port}/alert`, { method: "POST", headers: BEARER, body: GRAFANA });
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: "OpenCode does not answer", detail: "ECONNREFUSED" });
+});
+
+test("the alert session is searched again until OpenCode answers its first session request", async (t) => {
+  // OpenCode as it starts: the health check answers, the first session
+  // requests do not, then the sessions answer
+  let calls = 0;
+  const upstream = http.createServer((request, response) => {
+    calls += 1;
+    if (calls <= 2) {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end("{}");
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(request.method === "GET" ? [] : { id: "ses_ready", title: "Alerts" }));
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+  const session = alertSession({ port: upstream.address().port, authorization: "" });
+  assert.equal(await prepareAlertSession(session, "/alert", [1, 1], 1), "ses_ready");
+  assert.equal(calls, 4);
+  assert.equal(await session.id(), "ses_ready");
+});
+
 // OpenCode for the start of the front process: it answers on the port it is
 // given, with the arguments it got.
 const FAKE = `
@@ -287,8 +463,33 @@ test("with / as base path OpenCode itself listens on the port, at the root", asy
   assert.doesNotMatch(front.output(), /serving below/);
 });
 
+test("with a login address alone the front process serves OpenCode at the root, behind it", async (t) => {
+  const port = await freePort();
+  const front = startFront({ LITELLM_SUBSCRIPTION_LOGIN_URL: LOGIN, OPENCODE_PORT: String(port) });
+  t.after(() => front.child.kill("SIGTERM"));
+  const answer = await until(async () => (await fetch(`http://127.0.0.1:${port}/session`)).json(), "no answer at the root");
+  assert.equal(answer.url, "/session");
+  assert.deepEqual(answer.args.slice(-5), ["web", "--hostname", "127.0.0.1", "--port", String(UPSTREAM_PORT)]);
+  assert.match(front.output(), new RegExp(`opencode: serving at the root on port ${port}`));
+  assert.match(front.output(), /opencode: the web interface links to the subscription login https:\/\/swarm-01\/litellm\/mysubs/);
+});
+
+test("with an alert token digest alone the front process serves OpenCode at the root, behind it", async (t) => {
+  const port = await freePort();
+  const front = startFront({ OPENCODE_ALERT_TOKEN_SHA256: crypto.createHash("sha256").update("x").digest("hex"), OPENCODE_PORT: String(port) });
+  t.after(() => front.child.kill("SIGTERM"));
+  const answer = await until(async () => (await fetch(`http://127.0.0.1:${port}/session`)).json(), "no answer at the root");
+  assert.deepEqual(answer.args.slice(-5), ["web", "--hostname", "127.0.0.1", "--port", String(UPSTREAM_PORT)]);
+  const refused = await fetch(`http://127.0.0.1:${port}/alert`, { method: "POST", body: "x" });
+  assert.equal(refused.status, 401);
+});
+
 test("a wrong setting stops the start with a message that names it", async () => {
   for (const [env, message] of [
+    [{ LITELLM_SUBSCRIPTION_LOGIN_URL: "litellm/mysubs" }, /opencode: configuration error: LITELLM_SUBSCRIPTION_LOGIN_URL is "litellm\/mysubs"; it must be an http or https address/],
+    [{ OPENCODE_ALERT_TOKEN_SHA256: "the token itself" }, /opencode: configuration error: OPENCODE_ALERT_TOKEN_SHA256 is "the token itself"; it must be the SHA-256 digest/],
+    [{ OPENCODE_BASE_PATH: "/opencode", OPENCODE_ALERT_SESSION_TITLE: "a\nb" }, /OPENCODE_ALERT_SESSION_TITLE is "a\\nb"/],
+    [{ OPENCODE_BASE_PATH: "/opencode", OPENCODE_ALERT_MAX_BYTES: "1MB" }, /OPENCODE_ALERT_MAX_BYTES is "1MB"/],
     [{ OPENCODE_BASE_PATH: "opencode" }, /opencode: configuration error: OPENCODE_BASE_PATH is "opencode"; it must be a path such as \/opencode/],
     [{ OPENCODE_BASE_PATH: "/open code" }, /OPENCODE_BASE_PATH is "\/open code"/],
     [{ OPENCODE_BASE_PATH: "/x/../y" }, /OPENCODE_BASE_PATH is "\/x\/..\/y"/],

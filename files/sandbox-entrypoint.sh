@@ -27,10 +27,12 @@ if [[ -n "${OPENCODE_SERVER_PASSWORD_FILE:-}" ]]; then
     unset OPENCODE_SERVER_PASSWORD_FILE
 fi
 
-# the web interface by default, below OPENCODE_BASE_PATH through the front
-# process that checks the value; any other opencode command, and
-# --print-config, when given
-if [[ $# -eq 0 && -n "${OPENCODE_BASE_PATH:-}" ]]; then
+# the web interface by default; through the front process, which checks the
+# values, below OPENCODE_BASE_PATH, with the link to
+# LITELLM_SUBSCRIPTION_LOGIN_URL and with the alert relay of
+# OPENCODE_ALERT_TOKEN_SHA256; any other opencode command, and --print-config,
+# when given
+if [[ $# -eq 0 && -n "${OPENCODE_BASE_PATH:-}${LITELLM_SUBSCRIPTION_LOGIN_URL:-}${OPENCODE_ALERT_TOKEN_SHA256:-}" ]]; then
     exec /usr/bin/node /usr/local/lib/opencode-base-path/serve.mjs
 fi
 if [[ $# -eq 0 ]]; then

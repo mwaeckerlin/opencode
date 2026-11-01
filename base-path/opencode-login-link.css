@@ -1,0 +1,43 @@
+/* The bar of the front process with the link to the login page of the
+   LiteLLM subscriptions, served from the origin of the page. It stands above
+   the interface of OpenCode, which then fills the rest of the window, so it
+   covers no control at any width; it takes the font of the page, and colours,
+   radius and size come from the tokens of the interface, so it follows the
+   light and the dark scheme. */
+:root {
+  --litellm-subscription-bar: calc(1.75rem + env(safe-area-inset-top, 0rem));
+}
+
+#litellm-subscription-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  block-size: var(--litellm-subscription-bar);
+  padding-block-start: env(safe-area-inset-top, 0rem);
+  padding-inline: 1rem;
+  background: var(--v2-background-bg-deep, #f5f5f5);
+  font-size: var(--font-size-small, 0.8125rem);
+  line-height: 1.5;
+}
+
+#litellm-subscription-bar ~ #root {
+  block-size: calc(100dvh - var(--litellm-subscription-bar));
+}
+
+#litellm-subscription-login {
+  border-radius: var(--radius-sm, 0.25rem);
+  color: var(--v2-text-text-accent, #034cff);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+#litellm-subscription-login:hover {
+  color: var(--v2-text-text-accent-hover, #0039c2);
+  text-decoration: underline;
+}
+
+#litellm-subscription-login:focus-visible {
+  outline: 0.125rem solid var(--v2-border-border-focus, #3b82f6);
+  outline-offset: 0.125rem;
+}
